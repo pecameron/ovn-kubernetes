@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/sirupsen/logrus"
@@ -160,12 +161,33 @@ func RunOVSVsctl(args ...string) (string, string, error) {
 	return strings.Trim(strings.TrimSpace(stdout.String()), "\""), stderr.String(), err
 }
 
+// Run the ovn-ctl command and retry if "Connection refused"
+// poll waitng for service to become available
+func runOVNretry(cmdPath string, args ...string) (*bytes.Buffer, *bytes.Buffer, error) {
+
+	for {
+		stdout, stderr, err := run(cmdPath, args...)
+		if err == nil {
+			return stdout, stderr, err
+		}
+
+		// Connection refused
+		// Master may not be up so keep trying
+		if strings.Contains(stderr.String(), "Connection refused") {
+			time.Sleep(2 * time.Second)
+		} else {
+			// Some other problem for caller to handle
+			return stdout, stderr, err
+		}
+	}
+}
+
 // RunOVNNbctlUnix runs command via ovn-nbctl, with ovn-nbctl using the unix
 // domain sockets to connect to the ovsdb-server backing the OVN NB database.
 func RunOVNNbctlUnix(args ...string) (string, string, error) {
 	cmdArgs := []string{fmt.Sprintf("--timeout=%d", ovsCommandTimeout)}
 	cmdArgs = append(cmdArgs, args...)
-	stdout, stderr, err := run(runner.nbctlPath, cmdArgs...)
+	stdout, stderr, err := runOVNretry(runner.nbctlPath, cmdArgs...)
 	return strings.Trim(strings.TrimFunc(stdout.String(), unicode.IsSpace), "\""),
 		stderr.String(), err
 }
@@ -189,7 +211,7 @@ func RunOVNNbctlWithTimeout(timeout int, args ...string) (string, string,
 
 	cmdArgs = append(cmdArgs, fmt.Sprintf("--timeout=%d", timeout))
 	cmdArgs = append(cmdArgs, args...)
-	stdout, stderr, err := run(runner.nbctlPath, cmdArgs...)
+	stdout, stderr, err := runOVNretry(runner.nbctlPath, cmdArgs...)
 	return strings.Trim(strings.TrimSpace(stdout.String()), "\""), stderr.String(), err
 }
 
